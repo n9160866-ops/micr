@@ -1,0 +1,58 @@
+name: Build HW Panel EXE
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installer .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Télécharger LibreHardwareMonitorLib (dernière release)
+        shell: pwsh
+        working-directory: helper
+        run: |
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest"
+          $asset = $release.assets | Where-Object { $_.name -like "*net472*.zip" } | Select-Object -First 1
+          if (-not $asset) { $asset = $release.assets | Where-Object { $_.name -like "*.zip" } | Select-Object -First 1 }
+          Write-Host "Téléchargement de $($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile lhm.zip
+          Expand-Archive -Path lhm.zip -DestinationPath lhm_extracted
+          Copy-Item "lhm_extracted\LibreHardwareMonitorLib.dll" -Destination .
+
+      - name: Compiler le helper (exe autonome)
+        working-directory: helper
+        run: |
+          dotnet publish helper.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o publish
+
+      - name: Copier la DLL à côté du helper compilé
+        shell: pwsh
+        run: |
+          Copy-Item "helper\LibreHardwareMonitorLib.dll" -Destination "helper\publish\"
+
+      - name: Installer les dépendances npm
+        run: npm install
+
+      - name: Packager l'app Electron en exe portable
+        run: npm run dist
+
+      - name: Uploader l'exe en artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: HWPanel-exe
+          path: dist/*.exe
